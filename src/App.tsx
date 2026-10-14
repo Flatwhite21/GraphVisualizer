@@ -271,7 +271,7 @@ export const App: React.FC = () => {
           <div className="header-banner">
             <div>
               <h1>
-                <span>🌐</span>
+                {/* <span>🌐</span> */}
                 <span>Анализ научных сетей авторов</span>
               </h1>
               <p>
@@ -286,24 +286,17 @@ export const App: React.FC = () => {
                 className="btn-primary"
                 title="Загрузить Excel-файл (.xlsx) с публикациями"
               >
-                📥 Загрузить Excel (.xlsx)
+                {/* 📥 Загрузить Excel (.xlsx) */}
+                Загрузить Excel (.xlsx)
               </button>
-              <a
-                href="/scientific_network.zip"
-                download="scientific_network.zip"
-                className="btn-success"
-                title="Скачать исходный код Python/PySide6 приложения в архиве ZIP"
-              >
-                📦 Скачать проект Python (.zip)
-              </a>
-              <button
+              {/* <button
                 type="button"
                 onClick={() => setIsModalOpen(true)}
                 className="btn-secondary"
                 title="Добавить публикацию вручную"
               >
                 ➕ Добавить
-              </button>
+              </button> */}
             </div>
           </div>
 
@@ -336,7 +329,7 @@ export const App: React.FC = () => {
               onClick={() => setActiveTab('graph')}
               className={`nav-tab-button ${activeTab === 'graph' ? 'active' : ''}`}
             >
-              <span>🕸️</span>
+              {/* <span>🕸️</span> */}
               <span>Сетевой граф</span>
             </button>
             <button
@@ -344,7 +337,7 @@ export const App: React.FC = () => {
               onClick={() => setActiveTab('matrix')}
               className={`nav-tab-button ${activeTab === 'matrix' ? 'active' : ''}`}
             >
-              <span>📊</span>
+              {/* <span>📊</span> */}
               <span>Матрица смежности</span>
             </button>
             <button
@@ -352,7 +345,7 @@ export const App: React.FC = () => {
               onClick={() => setActiveTab('raw')}
               className={`nav-tab-button ${activeTab === 'raw' ? 'active' : ''}`}
             >
-              <span>📄</span>
+              {/* <span>📄</span> */}
               <span>Реестр публикаций ({filteredArticles.length})</span>
             </button>
             <button
@@ -360,7 +353,7 @@ export const App: React.FC = () => {
               onClick={() => setActiveTab('authors')}
               className={`nav-tab-button ${activeTab === 'authors' ? 'active' : ''}`}
             >
-              <span>👥</span>
+              {/* <span>👥</span> */}
               <span>Исследователи ({networkData.nodes.length})</span>
             </button>
             <button
@@ -368,7 +361,7 @@ export const App: React.FC = () => {
               onClick={() => setActiveTab('stats')}
               className={`nav-tab-button ${activeTab === 'stats' ? 'active' : ''}`}
             >
-              <span>📈</span>
+              {/* <span>📈</span> */}
               <span>Аналитика и статистика</span>
             </button>
           </div>
@@ -520,7 +513,8 @@ export const App: React.FC = () => {
                     onClick={() => fileInputRef.current?.click()}
                     className="btn-primary"
                   >
-                    📥 Загрузить другой .xlsx
+                    {/* 📥 Загрузить другой .xlsx */}
+                    Загрузить другой .xlsx
                   </button>
                 </div>
               </div>
@@ -762,7 +756,8 @@ export const App: React.FC = () => {
           {/* Network Quick Stats */}
           <div className="side-panel">
             <h3>
-              <span>📊 Показатели сети</span>
+              {/* <span>📊 Показатели сети</span> */}
+              <span>Показатели сети</span>
               <span className="text-[11px] font-normal text-slate-400">{filteredArticles.length} статей</span>
             </h3>
             <div className="stat-row">
@@ -790,7 +785,8 @@ export const App: React.FC = () => {
           {/* Selected Author Details Card */}
           <div className="side-panel">
             <h3>
-              <span>👤 Автор</span>
+              {/* <span>👤 Автор</span> */}
+              <span>Автор</span>
               {selectedAuthorId && (
                 <button
                   type="button"
@@ -874,7 +870,8 @@ export const App: React.FC = () => {
               </div>
             ) : (
               <div className="py-6 text-center text-slate-400 text-xs">
-                <span>👈 Кликните на узел в графе, чтобы открыть досье исследователя и его соавторов</span>
+                {/* <span>👈 Кликните на узел в графе, чтобы открыть досье исследователя и его соавторов</span> */}
+                <span>Кликните на узел в графе, чтобы открыть досье исследователя и его соавторов</span>
               </div>
             )}
           </div>
@@ -882,7 +879,8 @@ export const App: React.FC = () => {
           {/* Scientific Schools / Communities */}
           <div className="side-panel">
             <h3>
-              <span>🔗 Научные школы</span>
+              {/* <span>🔗 Научные школы</span> */}
+              <span>Научные школы</span>
               <button
                 type="button"
                 onClick={() => setColorByCommunity(!colorByCommunity)}
@@ -922,7 +920,7 @@ export const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Export & Controls */}
+          {/* Export & Controls
           <div className="side-panel">
             <h3>
               <span>💾 Экспорт для ВКР</span>
@@ -952,7 +950,7 @@ export const App: React.FC = () => {
                 Сброс к исходному набору статей
               </button>
             </div>
-          </div>
+          </div> */}
         </div>
       </div>
 
