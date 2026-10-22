@@ -344,12 +344,96 @@ export function buildNetwork(articles: Article[]): NetworkData {
     });
   });
 
-  // Nodes: all nodes have uniform, identical size as required
+  // Calculate additional SNA characteristics: Closeness Centrality, Clustering Coefficient, Weighted Degree
+  const closenessMap = new Map<string, number>();
+  const clusteringMap = new Map<string, number>();
+  const weightedDegreeMap = new Map<string, number>();
+  const authorOrgs = new Map<string, Map<string, number>>();
+
+  for (const article of articles) {
+    const authors = article.authors.map((a) => a.trim()).filter(Boolean);
+    const org = article.organization?.trim() || 'ПетрГУ';
+    for (const a of authors) {
+      if (!authorOrgs.has(a)) authorOrgs.set(a, new Map());
+      const orgMap = authorOrgs.get(a)!;
+      orgMap.set(org, (orgMap.get(org) || 0) + 1);
+    }
+  }
+
+  for (const author of authorList) {
+    // Weighted Degree (Strength)
+    let strength = 0;
+    adj.get(author)?.forEach((wt) => {
+      strength += wt;
+    });
+    weightedDegreeMap.set(author, strength);
+
+    // Closeness Centrality (BFS shortest path)
+    const dist = new Map<string, number>();
+    const queue = [author];
+    dist.set(author, 0);
+    let totalDist = 0;
+    let reachableCount = 0;
+
+    while (queue.length > 0) {
+      const curr = queue.shift()!;
+      const d = dist.get(curr)!;
+      const nbrs = adj.get(curr) || new Map();
+      for (const [nbr] of nbrs) {
+        if (!dist.has(nbr)) {
+          dist.set(nbr, d + 1);
+          totalDist += d + 1;
+          reachableCount++;
+          queue.push(nbr);
+        }
+      }
+    }
+    const cc = reachableCount > 0 && totalDist > 0 ? reachableCount / totalDist : 0;
+    closenessMap.set(author, cc);
+
+    // Local Clustering Coefficient
+    const nbrs = Array.from(adj.get(author)?.keys() || []);
+    const k = nbrs.length;
+    if (k < 2) {
+      clusteringMap.set(author, 0);
+    } else {
+      let triangles = 0;
+      for (let i = 0; i < k; i++) {
+        for (let j = i + 1; j < k; j++) {
+          if (adj.get(nbrs[i])?.has(nbrs[j])) {
+            triangles++;
+          }
+        }
+      }
+      const maxTriangles = (k * (k - 1)) / 2;
+      clusteringMap.set(author, triangles / maxTriangles);
+    }
+  }
+
+  const totalN = authorList.length;
+
   const UNIFORM_NODE_SIZE = 11;
   const nodes: GraphNode[] = authorList.map((author) => {
     const connections = adj.get(author)?.size || 0;
     const centrality = betweenness.get(author) || 0;
     const pubs = authorPubs.get(author) || 1;
+    const weightedDegree = weightedDegreeMap.get(author) || connections;
+    const closeness = closenessMap.get(author) || 0;
+    const clusteringCoefficient = clusteringMap.get(author) || 0;
+    const normalizedDegree = totalN > 1 ? connections / (totalN - 1) : 0;
+
+    // Determine primary organization
+    const orgMap = authorOrgs.get(author);
+    let bestOrg = 'ПетрГУ';
+    if (orgMap && orgMap.size > 0) {
+      let maxCnt = -1;
+      for (const [org, cnt] of orgMap.entries()) {
+        if (cnt > maxCnt) {
+          maxCnt = cnt;
+          bestOrg = org;
+        }
+      }
+    }
 
     return {
       id: author,
@@ -357,6 +441,11 @@ export function buildNetwork(articles: Article[]): NetworkData {
       connections,
       publications: pubs,
       centrality,
+      normalizedDegree,
+      weightedDegree,
+      closeness,
+      clusteringCoefficient,
+      organization: bestOrg,
       size: UNIFORM_NODE_SIZE,
       communityId: authorToCommunity.get(author) ?? 0,
     };

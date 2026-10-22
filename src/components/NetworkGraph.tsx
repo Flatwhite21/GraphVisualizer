@@ -2,19 +2,21 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
 import { GraphNode, GraphLink, NetworkCommunity } from '../types';
 import { COMMUNITY_COLORS } from '../utils/networkAnalysis';
+import { exportResearchersXLSX } from '../utils/exporter';
 import { 
   ZoomIn, 
   ZoomOut, 
   Maximize2, 
-  RotateCcw, 
   Sliders, 
-  Eye, 
-  FileImage, 
   Download, 
   Palette, 
   Hash, 
-  Users,
-  Compass
+  Compass,
+  Spline,
+  Layers,
+  Sparkles,
+  Filter,
+  FileSpreadsheet
 } from 'lucide-react';
 
 interface NetworkGraphProps {
@@ -26,8 +28,6 @@ interface NetworkGraphProps {
   showLabels: boolean;
   colorByCommunity?: boolean;
   simulationTrigger: number;
-  inactiveEdgeOpacity?: number;
-  onInactiveEdgeOpacityChange?: (opacity: number) => void;
 }
 
 // Последовательный синий градиент согласно требованиям ВКР:
@@ -44,6 +44,101 @@ export const UNIFORM_EDGE_WIDTH = 2.2;
 export const UNIFORM_RADIUS = 11;
 
 type LabelMode = 'smart' | 'all' | 'hover';
+type EdgeShapeMode = 'curved' | 'straight';
+type MinWeightFilter = 1 | 2 | 3;
+
+/**
+ * Calculates a smooth curved path between two nodes so lines do NOT tangle in the center
+ */
+function getCurvedLinkPath(
+  s: { x?: number; y?: number; id: string },
+  t: { x?: number; y?: number; id: string },
+  curvature: number
+): { path: string; midX: number; midY: number } {
+  const x1 = s.x ?? 0;
+  const y1 = s.y ?? 0;
+  const x2 = t.x ?? 0;
+  const y2 = t.y ?? 0;
+
+  if (curvature <= 0.01) {
+    return {
+      path: `M ${x1} ${y1} L ${x2} ${y2}`,
+      midX: (x1 + x2) / 2,
+      midY: (y1 + y2) / 2,
+    };
+  }
+
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const dist = Math.hypot(dx, dy) || 1;
+
+  // Deterministic direction based on string comparison so arcs curve consistently outwards
+  const sign = s.id < t.id ? 1 : -1;
+  const normX = -dy / dist;
+  const normY = dx / dist;
+
+  // Offset arc apex gently, scaled with distance to avoid excessive bulging
+  const offset = Math.min(dist * 0.22, 38) * curvature * sign;
+
+  const midX = (x1 + x2) / 2 + normX * offset;
+  const midY = (y1 + y2) / 2 + normY * offset;
+
+  return {
+    path: `M ${x1} ${y1} Q ${midX} ${midY} ${x2} ${y2}`,
+    midX,
+    midY,
+  };
+}
+
+/**
+ * Generate smooth padded hull points for a community of nodes
+ */
+function getCommunityHullPath(nodes: GraphNode[], padding = 35): string | null {
+  if (nodes.length === 0) return null;
+
+  const points: [number, number][] = nodes
+    .filter((n) => n.x !== undefined && n.y !== undefined)
+    .map((n) => [n.x as number, n.y as number]);
+
+  if (points.length === 0) return null;
+
+  if (points.length === 1) {
+    const [cx, cy] = points[0];
+    return `M ${cx - padding} ${cy} A ${padding} ${padding} 0 1 0 ${cx + padding} ${cy} A ${padding} ${padding} 0 1 0 ${cx - padding} ${cy} Z`;
+  }
+
+  if (points.length === 2) {
+    const [p1, p2] = points;
+    const dx = p2[0] - p1[0];
+    const dy = p2[1] - p1[1];
+    const dist = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / dist) * padding;
+    const ny = (dx / dist) * padding;
+
+    return `M ${p1[0] + nx} ${p1[1] + ny} L ${p2[0] + nx} ${p2[1] + ny} A ${padding} ${padding} 0 0 1 ${p2[0] - nx} ${p2[1] - ny} L ${p1[0] - nx} ${p1[1] - ny} A ${padding} ${padding} 0 0 1 ${p1[0] + nx} ${p1[1] + ny} Z`;
+  }
+
+  // Polygon hull for 3+ points
+  const hull = d3.polygonHull(points);
+  if (!hull || hull.length < 3) return null;
+
+  // Expand hull points outwards from centroid
+  const centroid = d3.polygonCentroid(hull);
+  const expandedHull = hull.map(([x, y]) => {
+    const vx = x - centroid[0];
+    const vy = y - centroid[1];
+    const len = Math.hypot(vx, vy) || 1;
+    return [x + (vx / len) * padding, y + (vy / len) * padding] as [number, number];
+  });
+
+  const lineGen = d3
+    .line<[number, number]>()
+    .x((d) => d[0])
+    .y((d) => d[1])
+    .curve(d3.curveCatmullRomClosed.alpha(0.5));
+
+  return lineGen(expandedHull);
+}
 
 export const NetworkGraph: React.FC<NetworkGraphProps> = ({
   nodes,
@@ -53,40 +148,38 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
   onSelectAuthor,
   colorByCommunity = false,
   simulationTrigger,
-  inactiveEdgeOpacity = 0.25,
-  onInactiveEdgeOpacityChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const simulationRef = useRef<d3.Simulation<GraphNode, GraphLink> | null>(null);
 
-  // User interactive display controls
-  const [internalOpacity, setInternalOpacity] = useState<number>(0.25);
-  const inactiveOpacity = inactiveEdgeOpacity !== undefined ? inactiveEdgeOpacity : internalOpacity;
-  const setInactiveOpacity = (val: number) => {
-    if (onInactiveEdgeOpacityChange) {
-      onInactiveEdgeOpacityChange(val);
-    } else {
-      setInternalOpacity(val);
-    }
-  };
-
+  // Readability & Display Controls
+  const [edgeShape, setEdgeShape] = useState<EdgeShapeMode>('curved');
+  const [curvatureAmount, setCurvatureAmount] = useState<number>(0.35); // 0 (straight) to 0.75 (pronounced arc)
   const [showEdgeWeights, setShowEdgeWeights] = useState<boolean>(true);
-  const [showOpacityFlyout, setShowOpacityFlyout] = useState<boolean>(false);
   const [labelMode, setLabelMode] = useState<LabelMode>('smart');
-  const [linkDistanceMult, setLinkDistanceMult] = useState<number>(1.2); // 0.8x to 2.0x
-  const [chargeStrength, setChargeStrength] = useState<number>(-850); // -400 to -1600
+  const [linkDistanceMult, setLinkDistanceMult] = useState<number>(1.45); // Generous default distance for clarity
+  const [chargeStrength, setChargeStrength] = useState<number>(-1150); // Stronger repulsion so nodes breathe
   const [enableCommunityClustering, setEnableCommunityClustering] = useState<boolean>(true);
+  const [showCommunityHulls, setShowCommunityHulls] = useState<boolean>(false);
+  const [inGraphMinWeight, setInGraphMinWeight] = useState<MinWeightFilter>(1);
   const [hoveredAuthorId, setHoveredAuthorId] = useState<string | null>(null);
+  const [hoveredLinkId, setHoveredLinkId] = useState<string | null>(null);
   const [hoveredPos, setHoveredPos] = useState<{ x: number; y: number } | null>(null);
   const [showSettings, setShowSettings] = useState<boolean>(false);
 
-  // Direct coauthors map for fast lookup
+  // Filter links for display by in-graph minimum weight threshold
+  const activeLinks = useMemo(() => {
+    if (inGraphMinWeight <= 1) return links;
+    return links.filter((l) => l.weight >= inGraphMinWeight);
+  }, [links, inGraphMinWeight]);
+
+  // Fast neighbor lookup
   const neighborMap = useMemo(() => {
     const map = new Map<string, Set<string>>();
     nodes.forEach((n) => map.set(n.id, new Set()));
-    links.forEach((l) => {
+    activeLinks.forEach((l) => {
       const s = typeof l.source === 'object' ? (l.source as GraphNode).id : l.source;
       const t = typeof l.target === 'object' ? (l.target as GraphNode).id : l.target;
       if (!map.has(s)) map.set(s, new Set());
@@ -95,9 +188,9 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
       map.get(t)!.add(s);
     });
     return map;
-  }, [nodes, links]);
+  }, [nodes, activeLinks]);
 
-  // Compute prominent nodes (degree >= 2 or top 25%)
+  // Prominent nodes for smart label mode
   const prominentNodeIds = useMemo(() => {
     const sorted = [...nodes].sort((a, b) => b.connections - a.connections);
     const topCount = Math.max(8, Math.ceil(nodes.length * 0.35));
@@ -108,7 +201,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
     return topIds;
   }, [nodes]);
 
-  // Hovered author details for tooltip
+  // Hovered author details for floating tooltip card
   const hoveredNodeInfo = useMemo(() => {
     const activeId = hoveredAuthorId || selectedAuthorId;
     if (!activeId) return null;
@@ -143,14 +236,14 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
 
     if (minX === Infinity) return;
 
-    const width = containerRef.current.clientWidth || 900;
-    const height = containerRef.current.clientHeight || 640;
-    const padding = 70;
+    const width = containerRef.current.clientWidth || 920;
+    const height = containerRef.current.clientHeight || 660;
+    const padding = 80;
 
     const graphWidth = maxX - minX + padding * 2;
     const graphHeight = maxY - minY + padding * 2;
 
-    const scale = Math.max(0.2, Math.min(1.8, Math.min(width / graphWidth, height / graphHeight)));
+    const scale = Math.max(0.18, Math.min(1.6, Math.min(width / graphWidth, height / graphHeight)));
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
 
@@ -166,12 +259,12 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
   useEffect(() => {
     if (!containerRef.current || !svgRef.current) return;
     const container = containerRef.current;
-    const width = container.clientWidth || 900;
-    const height = container.clientHeight || 640;
+    const width = container.clientWidth || 920;
+    const height = container.clientHeight || 660;
 
     // Deep copy data for D3 mutation
     const nodesCopy: (GraphNode & d3.SimulationNodeDatum)[] = nodes.map((d) => ({ ...d }));
-    const linksCopy: (GraphLink & d3.SimulationLinkDatum<GraphNode>)[] = links.map((d) => ({
+    const linksCopy: (GraphLink & d3.SimulationLinkDatum<GraphNode>)[] = activeLinks.map((d) => ({
       ...d,
       source: typeof d.source === 'object' ? (d.source as GraphNode).id : d.source,
       target: typeof d.target === 'object' ? (d.target as GraphNode).id : d.target,
@@ -181,21 +274,21 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
     svg.selectAll('*').remove();
     svg.attr('width', width).attr('height', height);
 
-    // Defs for filters
+    // Defs
     const defs = svg.append('defs');
     
-    // Soft drop shadow
-    const filter = defs.append('filter').attr('id', 'node-shadow').attr('height', '140%').attr('width', '140%');
+    // Soft shadow
+    const filter = defs.append('filter').attr('id', 'node-shadow').attr('height', '150%').attr('width', '150%');
     filter.append('feDropShadow')
       .attr('dx', '0')
-      .attr('dy', '2')
-      .attr('stdDeviation', '2.5')
+      .attr('dy', '2.5')
+      .attr('stdDeviation', '3')
       .attr('flood-color', '#0f172a')
       .attr('flood-opacity', '0.22');
 
-    // Glow filter for highlighted nodes
-    const glow = defs.append('filter').attr('id', 'glow-active').attr('x', '-30%').attr('y', '-30%').attr('width', '160%').attr('height', '160%');
-    glow.append('feGaussianBlur').attr('stdDeviation', '3.5').attr('result', 'coloredBlur');
+    // Glow filter for active nodes
+    const glow = defs.append('filter').attr('id', 'glow-active').attr('x', '-35%').attr('y', '-35%').attr('width', '170%').attr('height', '170%');
+    glow.append('feGaussianBlur').attr('stdDeviation', '4').attr('result', 'coloredBlur');
     const feMerge = glow.append('feMerge');
     feMerge.append('feMergeNode').attr('in', 'coloredBlur');
     feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
@@ -210,14 +303,14 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
     zoomBehaviorRef.current = zoom;
     svg.call(zoom);
 
-    // Initial position: arrange communities slightly apart to prevent a tangled hairball
+    // Spatial cluster layout: spread community anchors well apart across 2D plane
     const commCount = Math.max(1, communities.length);
+    const commRadius = Math.min(width, height) * 0.42; // Farther apart so clusters do not overlap
     const commCenters = communities.map((_, i) => {
-      const angle = (i / commCount) * 2 * Math.PI;
-      const radius = Math.min(width, height) * 0.28;
+      const angle = (i / commCount) * 2 * Math.PI - Math.PI / 2;
       return {
-        x: width / 2 + Math.cos(angle) * radius,
-        y: height / 2 + Math.sin(angle) * radius,
+        x: width / 2 + Math.cos(angle) * commRadius,
+        y: height / 2 + Math.sin(angle) * commRadius,
       };
     });
 
@@ -225,15 +318,15 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
       const cId = node.communityId ?? 0;
       const center = commCenters[cId % commCenters.length] || { x: width / 2, y: height / 2 };
       if (node.x === undefined) {
-        node.x = center.x + (Math.random() - 0.5) * 140;
-        node.y = center.y + (Math.random() - 0.5) * 140;
+        node.x = center.x + (Math.random() - 0.5) * 160;
+        node.y = center.y + (Math.random() - 0.5) * 160;
       }
     });
 
-    // Custom clustering force
+    // Custom force: pulls nodes gently to their community home anchor
     function communityForce(alpha: number) {
       if (!enableCommunityClustering) return;
-      const strength = 0.14 * alpha;
+      const strength = 0.18 * alpha;
       for (const node of nodesCopy) {
         if (node.communityId !== undefined && commCenters[node.communityId]) {
           const target = commCenters[node.communityId];
@@ -245,8 +338,8 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
       }
     }
 
-    // Force Simulation with calibrated distances
-    const baseDistance = 110 * linkDistanceMult;
+    // Force Simulation with generous distance and strong repulsion
+    const baseDistance = 135 * linkDistanceMult;
 
     const simulation = d3.forceSimulation<GraphNode>(nodesCopy)
       .force(
@@ -254,50 +347,94 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
         d3.forceLink<GraphNode, GraphLink>(linksCopy)
           .id((d) => d.id)
           .distance((d) => {
-            // Closer distance for high weights, looser for single weight
-            const factor = Math.max(0.65, 1.25 - (d.weight - 1) * 0.2);
+            // Tighter distance for strong coauthors, longer distance for single paper
+            const factor = Math.max(0.7, 1.25 - (d.weight - 1) * 0.18);
             return baseDistance * factor;
           })
-          .strength(0.3)
+          .strength(0.35)
       )
       .force(
         'charge',
         d3.forceManyBody()
           .strength(chargeStrength)
-          .distanceMax(850)
+          .distanceMax(950)
       )
-      .force('center', d3.forceCenter(width / 2, height / 2).strength(0.045))
+      .force('center', d3.forceCenter(width / 2, height / 2).strength(0.025)) // Gentle centering so nodes don't bunch into a knot
       .force(
         'collision',
         d3.forceCollide<GraphNode>()
-          .radius(UNIFORM_RADIUS + 20)
-          .strength(0.85)
+          .radius(UNIFORM_RADIUS + 24) // Generous collision radius to prevent overlapping
+          .strength(0.9)
       )
       .force('community', communityForce);
 
     simulationRef.current = simulation;
 
-    // Links group
+    // Community Background Enclosure Hulls (Visual Bubbles)
+    const hullsGroup = g.append('g').attr('class', 'community-hulls');
+    const hullSelection = hullsGroup
+      .selectAll('path')
+      .data(communities)
+      .enter()
+      .append('path')
+      .attr('class', 'community-hull')
+      .attr('fill', (c) => COMMUNITY_COLORS[c.id % COMMUNITY_COLORS.length])
+      .attr('fill-opacity', showCommunityHulls ? 0.08 : 0)
+      .attr('stroke', (c) => COMMUNITY_COLORS[c.id % COMMUNITY_COLORS.length])
+      .attr('stroke-width', 1.5)
+      .attr('stroke-dasharray', '5,5')
+      .attr('stroke-opacity', showCommunityHulls ? 0.35 : 0)
+      .style('pointer-events', 'none')
+      .style('transition', 'fill-opacity 0.25s, stroke-opacity 0.25s');
+
+    // Community Label Tags on the canvas
+    const hullLabelsGroup = g.append('g').attr('class', 'community-hull-labels');
+    const hullLabelsSelection = hullLabelsGroup
+      .selectAll('text')
+      .data(communities)
+      .enter()
+      .append('text')
+      .attr('class', 'community-hull-label')
+      .text((c) => `Научная школа ${c.id + 1} (${c.size} авт.)`)
+      .attr('font-size', '11px')
+      .attr('font-weight', '700')
+      .attr('fill', (c) => COMMUNITY_COLORS[c.id % COMMUNITY_COLORS.length])
+      .attr('opacity', showCommunityHulls ? 0.75 : 0)
+      .style('pointer-events', 'none');
+
+    // Effective curvature value
+    const activeCurvature = edgeShape === 'curved' ? curvatureAmount : 0;
+
+    // Links group using curved SVG Paths (<path>) rather than intersecting straight lines
     const linkGroup = g.append('g').attr('class', 'links');
     const linkSelection = linkGroup
-      .selectAll('line')
+      .selectAll('path')
       .data(linksCopy)
       .enter()
-      .append('line')
+      .append('path')
       .attr('class', 'link')
       .attr('stroke', (d) => getSequentialBlueLinkColor(d.weight))
-      .attr('stroke-opacity', 0.85)
+      .attr('stroke-opacity', (d) => (d.weight >= 2 ? 0.85 : 0.55))
       .attr('stroke-width', UNIFORM_EDGE_WIDTH)
+      .attr('fill', 'none')
       .attr('stroke-linecap', 'round')
       .style('cursor', 'pointer')
       .on('mouseenter', function (event, d) {
         const s = typeof d.source === 'object' ? (d.source as GraphNode).id : String(d.source);
         const t = typeof d.target === 'object' ? (d.target as GraphNode).id : String(d.target);
-        d3.select(this).attr('stroke-width', UNIFORM_EDGE_WIDTH + 2.5).attr('stroke-opacity', 1);
+        const lKey = `${s}__${t}`;
+        d3.select(this)
+          .attr('stroke-width', UNIFORM_EDGE_WIDTH + 2.5)
+          .attr('stroke-opacity', 1);
+        setHoveredLinkId(lKey);
         setHoveredAuthorId(s);
         setHoveredPos({ x: event.clientX, y: event.clientY });
       })
-      .on('mouseleave', function () {
+      .on('mouseleave', function (event, d) {
+        d3.select(this)
+          .attr('stroke-width', UNIFORM_EDGE_WIDTH)
+          .attr('stroke-opacity', d.weight >= 2 ? 0.85 : 0.55);
+        setHoveredLinkId(null);
         setHoveredAuthorId(null);
         setHoveredPos(null);
       });
@@ -309,25 +446,39 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
       return `Соавторство: ${s} ⟷ ${t}\nСовместных статей: ${d.weight}`;
     });
 
-    // Edge weights badges group (numbers along lines)
+    // Edge weights badges group (clean pills placed at curved midpoint)
     const edgeWeightsGroup = g.append('g').attr('class', 'edge-weights');
     const edgeWeightsSelection = edgeWeightsGroup
-      .selectAll('text')
-      .data(linksCopy)
+      .selectAll('g')
+      .data(linksCopy.filter((d) => d.weight >= 2)) // Only show numbers for repeated coauthorship
       .enter()
+      .append('g')
+      .attr('class', 'edge-weight-badge')
+      .style('pointer-events', 'none')
+      .style('opacity', showEdgeWeights ? 1 : 0);
+
+    // Badge background rect
+    edgeWeightsSelection
+      .append('rect')
+      .attr('width', 16)
+      .attr('height', 14)
+      .attr('x', -8)
+      .attr('y', -7)
+      .attr('rx', 4)
+      .attr('fill', '#ffffff')
+      .attr('stroke', (d) => (d.weight >= 3 ? '#1d4ed8' : '#93c5fd'))
+      .attr('stroke-width', 1.2)
+      .attr('filter', 'drop-shadow(0 1px 2px rgba(0,0,0,0.12))');
+
+    // Badge text
+    edgeWeightsSelection
       .append('text')
-      .attr('class', 'edge-weight-label')
-      .text((d) => (d.weight > 1 ? `${d.weight}` : ''))
+      .text((d) => `${d.weight}`)
       .attr('text-anchor', 'middle')
       .attr('dy', '0.35em')
-      .attr('font-size', '10px')
-      .attr('font-weight', '700')
-      .attr('fill', (d) => (d.weight >= 3 ? '#0f172a' : '#1d4ed8'))
-      .style('pointer-events', 'none')
-      .style('stroke', '#ffffff')
-      .style('stroke-width', '3px')
-      .style('paint-order', 'stroke fill')
-      .style('opacity', showEdgeWeights ? 1 : 0);
+      .attr('font-size', '9.5px')
+      .attr('font-weight', '800')
+      .attr('fill', (d) => (d.weight >= 3 ? '#0f172a' : '#1d4ed8'));
 
     // Nodes group
     const nodeGroup = g.append('g').attr('class', 'nodes');
@@ -410,25 +561,53 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
       .style('stroke-linejoin', 'round')
       .style('paint-order', 'stroke fill');
 
-    // Simulation tick
+    // Simulation tick handler
     simulation.on('tick', () => {
-      linkSelection
-        .attr('x1', (d) => ((d.source as GraphNode).x ?? 0))
-        .attr('y1', (d) => ((d.source as GraphNode).y ?? 0))
-        .attr('x2', (d) => ((d.target as GraphNode).x ?? 0))
-        .attr('y2', (d) => ((d.target as GraphNode).y ?? 0));
+      // 1. Update Curved Paths (<path>)
+      linkSelection.attr('d', (d) => {
+        const s = d.source as GraphNode;
+        const t = d.target as GraphNode;
+        return getCurvedLinkPath(s, t, activeCurvature).path;
+      });
 
-      edgeWeightsSelection
-        .attr('x', (d) => (((d.source as GraphNode).x ?? 0) + ((d.target as GraphNode).x ?? 0)) / 2)
-        .attr('y', (d) => (((d.source as GraphNode).y ?? 0) + ((d.target as GraphNode).y ?? 0)) / 2);
+      // 2. Update Edge Weight Badges to curve midpoint
+      edgeWeightsSelection.attr('transform', (d) => {
+        const s = d.source as GraphNode;
+        const t = d.target as GraphNode;
+        const { midX, midY } = getCurvedLinkPath(s, t, activeCurvature);
+        return `translate(${midX}, ${midY})`;
+      });
 
+      // 3. Update Nodes
       nodeSelection
         .attr('cx', (d) => d.x ?? 0)
         .attr('cy', (d) => d.y ?? 0);
 
+      // 4. Update Node Labels
       labelsSelection
         .attr('x', (d) => d.x ?? 0)
         .attr('y', (d) => d.y ?? 0);
+
+      // 5. Update Community Enclosure Hulls
+      if (showCommunityHulls) {
+        hullSelection.attr('d', (comm) => {
+          const commNodes = nodesCopy.filter((n) => n.communityId === comm.id);
+          return getCommunityHullPath(commNodes) || '';
+        });
+
+        hullLabelsSelection
+          .attr('x', (comm) => {
+            const commNodes = nodesCopy.filter((n) => n.communityId === comm.id && n.x !== undefined);
+            if (commNodes.length === 0) return 0;
+            return d3.mean(commNodes, (n) => n.x as number) ?? 0;
+          })
+          .attr('y', (comm) => {
+            const commNodes = nodesCopy.filter((n) => n.communityId === comm.id && n.y !== undefined);
+            if (commNodes.length === 0) return 0;
+            const minY = d3.min(commNodes, (n) => n.y as number) ?? 0;
+            return minY - 28;
+          });
+      }
     });
 
     // Click on canvas background clears selection
@@ -436,7 +615,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
       onSelectAuthor(null);
     });
 
-    // After warm-up ticks, do automatic fit to view
+    // Automatic smooth fit to view after physics stabilizes
     const timer = setTimeout(() => {
       handleFitToView();
     }, 450);
@@ -445,22 +624,34 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
       clearTimeout(timer);
       simulation.stop();
     };
-  }, [nodes, links, colorByCommunity, linkDistanceMult, chargeStrength, enableCommunityClustering, simulationTrigger]);
+  }, [
+    nodes,
+    activeLinks,
+    communities,
+    colorByCommunity,
+    linkDistanceMult,
+    chargeStrength,
+    enableCommunityClustering,
+    showCommunityHulls,
+    edgeShape,
+    curvatureAmount,
+    simulationTrigger,
+  ]);
 
   // Dynamic visual updates for Hover and Selection
   useEffect(() => {
     if (!svgRef.current) return;
     const svg = d3.select(svgRef.current);
     const nodesSel = svg.selectAll<SVGCircleElement, GraphNode>('.node');
-    const linksSel = svg.selectAll<SVGLineElement, GraphLink>('.link');
+    const linksSel = svg.selectAll<SVGPathElement, GraphLink>('.link');
     const labelsSel = svg.selectAll<SVGTextElement, GraphNode>('.node-label');
-    const weightsSel = svg.selectAll<SVGTextElement, GraphLink>('.edge-weight-label');
+    const weightsSel = svg.selectAll<SVGGElement, GraphLink>('.edge-weight-badge');
 
     const activeFocusId = hoveredAuthorId || selectedAuthorId;
     const activeNeighbors = activeFocusId ? neighborMap.get(activeFocusId) : null;
 
     if (!activeFocusId) {
-      // Default state
+      // Default state: clean, comfortable visibility
       nodesSel
         .attr('stroke', '#ffffff')
         .attr('stroke-width', 2.4)
@@ -469,7 +660,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
 
       linksSel
         .attr('stroke', (d) => getSequentialBlueLinkColor(d.weight))
-        .attr('stroke-opacity', 0.85)
+        .attr('stroke-opacity', (d) => (d.weight >= 2 ? 0.85 : 0.55))
         .attr('stroke-width', UNIFORM_EDGE_WIDTH);
 
       weightsSel.attr('opacity', showEdgeWeights ? 1 : 0);
@@ -486,7 +677,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
           .attr('fill', '#0f172a');
       });
     } else {
-      // Focused state (highlight ego-network, dim others)
+      // Focused state: highlight ego-network, dim all un-associated lines to ultra-low opacity
       nodesSel.each(function (d) {
         const isSelf = d.id === activeFocusId;
         const isNeighbor = activeNeighbors?.has(d.id);
@@ -506,9 +697,9 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
             .attr('filter', 'url(#node-shadow)');
         } else {
           sel
-            .attr('stroke', '#cbd5e1')
-            .attr('stroke-width', 1.2)
-            .attr('opacity', Math.max(0.18, Math.min(0.75, inactiveOpacity * 1.25)))
+            .attr('stroke', '#e2e8f0')
+            .attr('stroke-width', 1)
+            .attr('opacity', 0.12)
             .attr('filter', null);
         }
       });
@@ -525,11 +716,10 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
             .attr('stroke-opacity', 1)
             .attr('stroke-width', UNIFORM_EDGE_WIDTH + 1.2);
         } else {
-          // Неактивные рёбра не исчезают, а остаются видимыми, но бледнее активных
           sel
-            .attr('stroke', getSequentialBlueLinkColor(d.weight))
-            .attr('stroke-opacity', inactiveOpacity)
-            .attr('stroke-width', UNIFORM_EDGE_WIDTH);
+            .attr('stroke', '#cbd5e1')
+            .attr('stroke-opacity', 0.04) // Dims non-incident lines to almost invisible, eliminating tangling
+            .attr('stroke-width', 1);
         }
       });
 
@@ -537,12 +727,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
         const sId = typeof d.source === 'object' ? (d.source as GraphNode).id : d.source;
         const tId = typeof d.target === 'object' ? (d.target as GraphNode).id : d.target;
         const isIncident = sId === activeFocusId || tId === activeFocusId;
-        const sel = d3.select(this);
-        if (isIncident) {
-          sel.attr('opacity', showEdgeWeights ? 1 : 0);
-        } else {
-          sel.attr('opacity', showEdgeWeights ? Math.max(0.04, inactiveOpacity * 0.7) : 0);
-        }
+        d3.select(this).attr('opacity', isIncident && showEdgeWeights ? 1 : 0.02);
       });
 
       labelsSel.each(function (d) {
@@ -563,11 +748,31 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
             .attr('font-size', '12px')
             .attr('fill', '#1e40af');
         } else {
-          sel.attr('opacity', Math.max(0.06, inactiveOpacity * 0.45));
+          sel.attr('opacity', 0.06);
         }
       });
     }
-  }, [hoveredAuthorId, selectedAuthorId, labelMode, prominentNodeIds, showEdgeWeights, neighborMap, inactiveOpacity]);
+  }, [hoveredAuthorId, selectedAuthorId, labelMode, prominentNodeIds, showEdgeWeights, neighborMap]);
+
+  // Layout presets
+  const applyPreset = (preset: 'spacious' | 'balanced' | 'compact') => {
+    if (preset === 'spacious') {
+      setLinkDistanceMult(1.9);
+      setChargeStrength(-1550);
+      setEdgeShape('curved');
+      setCurvatureAmount(0.42);
+    } else if (preset === 'balanced') {
+      setLinkDistanceMult(1.45);
+      setChargeStrength(-1150);
+      setEdgeShape('curved');
+      setCurvatureAmount(0.35);
+    } else {
+      setLinkDistanceMult(1.0);
+      setChargeStrength(-700);
+      setEdgeShape('curved');
+      setCurvatureAmount(0.25);
+    }
+  };
 
   // Zoom controls
   const handleZoomIn = () => {
@@ -639,65 +844,61 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
   };
 
   return (
-    <div className="relative w-full h-[660px] graph-canvas-container overflow-hidden rounded-b-xl border-t border-slate-200" ref={containerRef}>
+    <div className="relative w-full h-[680px] graph-canvas-container overflow-hidden rounded-b-xl border-t border-slate-200" ref={containerRef}>
       <svg ref={svgRef} className="w-full h-full block cursor-grab active:cursor-grabbing" />
 
-      {/* Top Left Status & Hint */}
-      <div className="absolute top-3.5 left-3.5 flex flex-col gap-2 pointer-events-none">
-        <div className="bg-white/95 backdrop-blur-md px-3 py-2 rounded-xl text-xs text-slate-700 shadow-sm border border-slate-200/90 flex items-center gap-2">
+      {/* Top Left: Status & In-Graph Controls */}
+      <div className="absolute top-3.5 left-3.5 flex flex-col gap-2 z-10">
+        <div className="bg-white/95 backdrop-blur-md px-3.5 py-2 rounded-xl text-xs text-slate-700 shadow-sm border border-slate-200/90 flex items-center gap-2.5">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="font-semibold">{nodes.length} исследователей, {links.length} связей</span>
-          <span className="text-slate-400">|</span>
-          <span className="text-slate-500 hidden sm:inline">Клик по узлу — эго-сеть, колесо — зум</span>
+          <span className="font-bold text-slate-800">{nodes.length} исследователей</span>
+          <span className="text-slate-300">|</span>
+          <span className="text-slate-600 font-medium">{activeLinks.length} связей соавторства</span>
         </div>
-      </div>
 
-      {/* Top Center Banner when Author is Focused: shows quick slider for inactive edge opacity */}
-      {selectedAuthorId && (
-        <div className="absolute top-3.5 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md px-3.5 py-1.5 rounded-xl text-xs shadow-lg border border-indigo-200/90 flex items-center gap-3 z-10 max-w-[95%]">
-          <div className="flex items-center gap-1.5 font-bold text-slate-800 shrink-0">
-            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-            <span className="text-slate-500 font-medium">Автор:</span>
-            <span className="text-indigo-700 font-extrabold truncate max-w-[150px] sm:max-w-[220px]" title={selectedAuthorId}>
-              {selectedAuthorId}
-            </span>
-          </div>
-
-          <div className="w-px h-4 bg-slate-200 shrink-0" />
-
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="text-slate-600 text-[11px] font-medium hidden sm:inline flex items-center gap-1">
-              <Eye className="w-3.5 h-3.5 text-indigo-600" />
-              Неактивные связи:
-            </span>
-            <input
-              type="range"
-              min="0.05"
-              max="0.80"
-              step="0.05"
-              value={inactiveOpacity}
-              onChange={(e) => setInactiveOpacity(Number(e.target.value))}
-              className="w-20 sm:w-28 accent-indigo-600 cursor-pointer"
-              title="Регулировка прозрачности неактивных рёбер"
-            />
-            <span className="font-mono text-indigo-700 font-bold text-[11px] w-8">
-              {Math.round(inactiveOpacity * 100)}%
-            </span>
-          </div>
-
-          <div className="w-px h-4 bg-slate-200 shrink-0" />
-
+        {/* In-Graph Link Threshold Filter (Reduces tangling with 1-click) */}
+        <div className="bg-white/95 backdrop-blur-md p-1 rounded-xl text-xs shadow-sm border border-slate-200/90 flex items-center gap-1">
+          <span className="text-[10.5px] font-bold text-slate-500 px-2 flex items-center gap-1">
+            <Filter className="w-3 h-3 text-indigo-600" />
+            Связи:
+          </span>
           <button
             type="button"
-            onClick={() => onSelectAuthor(null)}
-            className="text-slate-400 hover:text-rose-600 font-semibold transition text-xs flex items-center gap-1 cursor-pointer shrink-0"
-            title="Снять выбор автора (вернуть весь граф)"
+            onClick={() => setInGraphMinWeight(1)}
+            className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
+              inGraphMinWeight === 1
+                ? 'bg-indigo-600 text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
           >
-            <span>✕</span>
-            <span className="hidden md:inline text-[11px]">Сбросить</span>
+            Все (1+)
+          </button>
+          <button
+            type="button"
+            onClick={() => setInGraphMinWeight(2)}
+            title="Скрыть разовые статьи, оставить только повторное соавторство"
+            className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
+              inGraphMinWeight === 2
+                ? 'bg-indigo-600 text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            Крепкие (2+)
+          </button>
+          <button
+            type="button"
+            onClick={() => setInGraphMinWeight(3)}
+            title="Оставить только устойчивое ядро научных коллективов"
+            className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
+              inGraphMinWeight === 3
+                ? 'bg-indigo-600 text-white shadow-2xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            Ядро (3+)
           </button>
         </div>
-      )}
+      </div>
 
       {/* Top Right: Color Legend Card (Дипломное требование: последовательный синий градиент) */}
       <div className="absolute top-3.5 right-3.5 bg-white/95 backdrop-blur-md px-3.5 py-3 rounded-xl text-[11px] shadow-md border border-slate-200/90 flex flex-col gap-1.5 z-10">
@@ -729,11 +930,11 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
 
       {/* Floating Layout Settings Flyout Panel */}
       {showSettings && (
-        <div className="absolute top-16 right-3.5 bg-white/98 backdrop-blur-md p-4 rounded-xl shadow-xl border border-slate-200 w-72 z-20 space-y-3.5 text-xs">
+        <div className="absolute top-16 right-3.5 bg-white/98 backdrop-blur-md p-4 rounded-xl shadow-xl border border-slate-200 w-80 z-20 space-y-3.5 text-xs">
           <div className="flex justify-between items-center pb-2 border-b border-slate-100">
             <span className="font-bold text-slate-900 flex items-center gap-1.5">
               <Sliders className="w-3.5 h-3.5 text-indigo-600" />
-              Параметры отображения
+              Параметры читаемости графа
             </span>
             <button
               type="button"
@@ -744,7 +945,90 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
             </button>
           </div>
 
+          {/* Quick Presets */}
           <div>
+            <span className="text-[11px] font-semibold text-slate-600 block mb-1.5">Готовые пресеты:</span>
+            <div className="grid grid-cols-3 gap-1 bg-slate-100 p-0.5 rounded-lg text-[11px]">
+              <button
+                type="button"
+                onClick={() => applyPreset('spacious')}
+                className={`py-1 rounded-md font-semibold transition cursor-pointer ${
+                  linkDistanceMult >= 1.8 ? 'bg-white text-indigo-700 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Просторный
+              </button>
+              <button
+                type="button"
+                onClick={() => applyPreset('balanced')}
+                className={`py-1 rounded-md font-semibold transition cursor-pointer ${
+                  linkDistanceMult > 1.2 && linkDistanceMult < 1.8 ? 'bg-white text-indigo-700 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Базовый
+              </button>
+              <button
+                type="button"
+                onClick={() => applyPreset('compact')}
+                className={`py-1 rounded-md font-semibold transition cursor-pointer ${
+                  linkDistanceMult <= 1.2 ? 'bg-white text-indigo-700 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Компактный
+              </button>
+            </div>
+          </div>
+
+          {/* Line Shape (Curved Arcs vs Straight) */}
+          <div className="pt-2 border-t border-slate-100">
+            <div className="flex justify-between items-center mb-1.5">
+              <span className="text-slate-700 font-medium flex items-center gap-1">
+                <Spline className="w-3.5 h-3.5 text-indigo-600" />
+                Форма связей:
+              </span>
+              <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setEdgeShape('curved')}
+                  className={`px-2 py-0.5 rounded-md font-semibold transition cursor-pointer ${
+                    edgeShape === 'curved' ? 'bg-white text-indigo-700 shadow-2xs' : 'text-slate-600'
+                  }`}
+                >
+                  Дуги (без наложений)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEdgeShape('straight')}
+                  className={`px-2 py-0.5 rounded-md font-semibold transition cursor-pointer ${
+                    edgeShape === 'straight' ? 'bg-white text-indigo-700 shadow-2xs' : 'text-slate-600'
+                  }`}
+                >
+                  Прямые
+                </button>
+              </div>
+            </div>
+
+            {edgeShape === 'curved' && (
+              <div className="mt-2">
+                <div className="flex justify-between text-[11px] mb-1">
+                  <span className="text-slate-500">Кривизна дуг:</span>
+                  <span className="font-mono text-indigo-600 font-bold">{Math.round(curvatureAmount * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="0.75"
+                  step="0.05"
+                  value={curvatureAmount}
+                  onChange={(e) => setCurvatureAmount(Number(e.target.value))}
+                  className="w-full accent-indigo-600 cursor-pointer"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Spacing distance */}
+          <div className="pt-2 border-t border-slate-100">
             <div className="flex justify-between mb-1">
               <span className="text-slate-600 font-medium">Расстояние между узлами:</span>
               <span className="font-mono text-indigo-600 font-semibold">{Math.round(linkDistanceMult * 100)}%</span>
@@ -752,7 +1036,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
             <input
               type="range"
               min="0.8"
-              max="2.2"
+              max="2.4"
               step="0.1"
               value={linkDistanceMult}
               onChange={(e) => setLinkDistanceMult(Number(e.target.value))}
@@ -760,6 +1044,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
             />
           </div>
 
+          {/* Repulsion charge */}
           <div>
             <div className="flex justify-between mb-1">
               <span className="text-slate-600 font-medium">Сила отталкивания:</span>
@@ -767,8 +1052,8 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
             </div>
             <input
               type="range"
-              min="400"
-              max="1600"
+              min="500"
+              max="2000"
               step="50"
               value={Math.abs(chargeStrength)}
               onChange={(e) => setChargeStrength(-Number(e.target.value))}
@@ -776,77 +1061,45 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
             />
           </div>
 
-          {/* Настройка прозрачности неактивных рёбер */}
-          <div className="pt-2 border-t border-slate-100 space-y-1.5">
-            <div className="flex justify-between items-center">
-              <span className="text-slate-700 font-semibold flex items-center gap-1.5">
-                <Eye className="w-3.5 h-3.5 text-indigo-600" />
-                Прозрачность неактивных связей:
+          {/* Community Hulls & Clusters */}
+          <div className="pt-2 border-t border-slate-100 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-600 font-medium flex items-center gap-1">
+                <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                Контуры научных школ:
               </span>
-              <span className="font-mono text-indigo-600 font-bold bg-indigo-50 px-1.5 py-0.5 rounded text-[11px]">
-                {Math.round(inactiveOpacity * 100)}%
-              </span>
+              <button
+                type="button"
+                onClick={() => setShowCommunityHulls(!showCommunityHulls)}
+                className={`px-2.5 py-0.5 rounded-md text-[11px] font-semibold transition ${
+                  showCommunityHulls ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                {showCommunityHulls ? 'Вкл' : 'Выкл'}
+              </button>
             </div>
-            <p className="text-[10.5px] text-slate-500 leading-tight">
-              Видимость остальных связей при клике на автора (бледнее его связей)
-            </p>
-            <input
-              type="range"
-              min="0.05"
-              max="0.80"
-              step="0.05"
-              value={inactiveOpacity}
-              onChange={(e) => setInactiveOpacity(Number(e.target.value))}
-              className="w-full accent-indigo-600 cursor-pointer"
-            />
-            <div className="flex justify-between text-[10px] text-slate-400">
-              <span>5% (Бледные)</span>
-              <span>25% (Оптимум)</span>
-              <span>80% (Яркие)</span>
-            </div>
-            <div className="flex items-center gap-1 pt-1">
-              {[
-                { label: '10%', val: 0.10 },
-                { label: '25%', val: 0.25 },
-                { label: '40%', val: 0.40 },
-                { label: '60%', val: 0.60 },
-              ].map((preset) => (
-                <button
-                  key={preset.val}
-                  type="button"
-                  onClick={() => setInactiveOpacity(preset.val)}
-                  className={`flex-1 py-0.5 rounded text-[10.5px] font-semibold text-center transition cursor-pointer ${
-                    Math.abs(inactiveOpacity - preset.val) < 0.03
-                      ? 'bg-indigo-600 text-white shadow-xs'
-                      : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                  }`}
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
-          </div>
 
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-            <span className="text-slate-600 font-medium">Группировать по школам:</span>
-            <button
-              type="button"
-              onClick={() => setEnableCommunityClustering(!enableCommunityClustering)}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition ${
-                enableCommunityClustering ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
-              }`}
-            >
-              {enableCommunityClustering ? 'Вкл' : 'Выкл'}
-            </button>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-600 font-medium">Группировка по школам:</span>
+              <button
+                type="button"
+                onClick={() => setEnableCommunityClustering(!enableCommunityClustering)}
+                className={`px-2.5 py-0.5 rounded-md text-[11px] font-semibold transition ${
+                  enableCommunityClustering ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                {enableCommunityClustering ? 'Вкл' : 'Выкл'}
+              </button>
+            </div>
           </div>
 
           <button
             type="button"
             onClick={handleFitToView}
-            className="w-full py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg text-xs flex items-center justify-center gap-1.5 transition"
+            className="w-full py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg text-xs flex items-center justify-center gap-1.5 transition cursor-pointer border border-indigo-200"
           >
             <Compass className="w-3.5 h-3.5" />
-            Центрировать и выровнять
+            Центрировать и выровнять граф
           </button>
         </div>
       )}
@@ -900,91 +1153,17 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
           Вес связей
         </button>
 
-        {/* Inactive Edges Opacity Button & Quick Popover */}
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => setShowOpacityFlyout(!showOpacityFlyout)}
-            title="Настройка прозрачности неактивных рёбер при выборе автора"
-            className={`h-8 px-2.5 flex items-center gap-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-              showOpacityFlyout || (selectedAuthorId && inactiveOpacity > 0.05)
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-            }`}
-          >
-            <Eye className="w-3.5 h-3.5" />
-            <span>Фон: {Math.round(inactiveOpacity * 100)}%</span>
-          </button>
-
-          {showOpacityFlyout && (
-            <div className="absolute bottom-10 right-0 bg-white/98 backdrop-blur-md p-3.5 rounded-xl shadow-2xl border border-slate-200 w-64 z-30 space-y-2.5 text-xs">
-              <div className="flex justify-between items-center pb-1.5 border-b border-slate-100">
-                <span className="font-bold text-slate-900 flex items-center gap-1.5">
-                  <Eye className="w-3.5 h-3.5 text-indigo-600" />
-                  Прозрачность неактивных связей
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setShowOpacityFlyout(false)}
-                  className="text-slate-400 hover:text-slate-700 font-bold"
-                >
-                  ✕
-                </button>
-              </div>
-              <p className="text-[11px] text-slate-500">
-                Видимость связей основного графа при выборе автора (сохраняет целостность графа).
-              </p>
-              <div>
-                <div className="flex justify-between mb-1">
-                  <span className="text-slate-600 font-medium">Значение:</span>
-                  <span className="font-mono text-indigo-600 font-bold">{Math.round(inactiveOpacity * 100)}%</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.05"
-                  max="0.80"
-                  step="0.05"
-                  value={inactiveOpacity}
-                  onChange={(e) => setInactiveOpacity(Number(e.target.value))}
-                  className="w-full accent-indigo-600 cursor-pointer"
-                />
-              </div>
-              <div className="flex items-center justify-between gap-1 pt-0.5">
-                {[
-                  { label: '10%', val: 0.10 },
-                  { label: '25%', val: 0.25 },
-                  { label: '40%', val: 0.40 },
-                  { label: '60%', val: 0.60 },
-                ].map((preset) => (
-                  <button
-                    key={preset.val}
-                    type="button"
-                    onClick={() => setInactiveOpacity(preset.val)}
-                    className={`flex-1 py-1 rounded text-[10.5px] font-semibold text-center transition cursor-pointer ${
-                      Math.abs(inactiveOpacity - preset.val) < 0.03
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                    }`}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Settings button */}
+        {/* Layout & Anti-tangling Settings Button */}
         <button
           type="button"
           onClick={() => setShowSettings(!showSettings)}
-          title="Настройки физической модели и расстояний"
-          className={`h-8 px-2.5 flex items-center gap-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
+          title="Настройки раскладки, дуг и предотвращения сплетения линий"
+          className={`h-8 px-2.5 flex items-center gap-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
             showSettings ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
           }`}
         >
-          <Sliders className="w-3.5 h-3.5" />
-          Раскладка
+          <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+          <span>Раскладка и дуги</span>
         </button>
 
         <div className="w-px h-5 bg-slate-200 mx-0.5" />
@@ -994,7 +1173,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
           type="button"
           onClick={handleFitToView}
           title="Вписать граф в окно"
-          className="h-8 px-2.5 flex items-center gap-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium transition cursor-pointer"
+          className="h-8 px-2.5 flex items-center gap-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition cursor-pointer"
         >
           <Maximize2 className="w-3.5 h-3.5" />
           Вписать
@@ -1020,7 +1199,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
           <ZoomOut className="w-3.5 h-3.5" />
         </button>
 
-        {/* Reset */}
+        {/* Reset Zoom */}
         <button
           type="button"
           onClick={handleResetZoom}
@@ -1043,30 +1222,30 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
           SVG
         </button>
 
-        {/* Export PNG */}
+        {/* Export Excel (.xlsx) */}
         <button
           type="button"
-          onClick={handleExportPNG}
-          title="Скачать растровое изображение высокого качества (.png 300 DPI)"
-          className="h-8 px-2.5 flex items-center gap-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium transition cursor-pointer"
+          onClick={() => exportResearchersXLSX(nodes, links, communities)}
+          title="Скачать числовые характеристики исследователей в Excel (.xlsx)"
+          className="h-8 px-2.5 flex items-center gap-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-semibold transition cursor-pointer border border-emerald-300"
         >
-          <FileImage className="w-3.5 h-3.5" />
-          PNG
+          <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Excel</span>
         </button>
       </div>
 
       {/* Floating Hover Tooltip Card */}
       {hoveredNodeInfo && hoveredPos && (
         <div
-          className="fixed pointer-events-none z-50 bg-slate-900/95 text-white backdrop-blur-md px-3.5 py-2.5 rounded-xl shadow-2xl border border-slate-700 text-xs w-64 transition-transform duration-75"
+          className="fixed pointer-events-none z-50 bg-slate-900/95 text-white backdrop-blur-md px-4 py-3 rounded-xl shadow-2xl border border-slate-700 text-xs w-72 transition-transform duration-75"
           style={{
-            left: Math.min(hoveredPos.x + 14, window.innerWidth - 270),
-            top: Math.min(hoveredPos.y + 14, window.innerHeight - 180),
+            left: Math.min(hoveredPos.x + 14, window.innerWidth - 310),
+            top: Math.min(hoveredPos.y + 14, window.innerHeight - 200),
           }}
         >
           <div className="font-bold text-sm text-indigo-300 flex items-center justify-between">
             <span>{hoveredNodeInfo.node.label}</span>
-            <span className="text-[10px] px-1.5 py-0.5 bg-indigo-500/30 text-indigo-200 rounded font-semibold">
+            <span className="text-[10px] px-2 py-0.5 bg-indigo-500/30 text-indigo-200 rounded-full font-semibold">
               Школа {(hoveredNodeInfo.node.communityId ?? 0) + 1}
             </span>
           </div>
@@ -1083,11 +1262,11 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
           </div>
 
           {hoveredNodeInfo.neighbors.length > 0 && (
-            <div className="mt-2 pt-1.5 border-t border-slate-800">
-              <span className="text-[10px] text-slate-400 block mb-1">
+            <div className="mt-2.5 pt-2 border-t border-slate-800">
+              <span className="text-[10.5px] text-slate-400 block mb-1">
                 Соавторы ({hoveredNodeInfo.neighbors.length}):
               </span>
-              <div className="text-[10.5px] text-slate-300 line-clamp-2">
+              <div className="text-[11px] text-slate-200 line-clamp-3 leading-snug">
                 {hoveredNodeInfo.neighbors.join(', ')}
               </div>
             </div>

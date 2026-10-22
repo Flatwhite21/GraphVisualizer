@@ -24,6 +24,11 @@ export interface GraphNode {
   connections: number;
   publications: number;
   centrality: number;
+  normalizedDegree?: number;
+  weightedDegree?: number;
+  closeness?: number;
+  clusteringCoefficient?: number;
+  organization?: string;
   communityId?: number;
   x?: number;
   y?: number;

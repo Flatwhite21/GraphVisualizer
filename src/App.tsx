@@ -11,6 +11,8 @@ import {
   exportResearchersXLSX,
   exportEdgesXLSX,
   exportStatsXLSX,
+  exportPublicationsXLSX,
+  exportFullMasterReportXLSX,
 } from './utils/exporter';
 import {
   Share2,
@@ -32,7 +34,6 @@ import {
   CheckCircle2,
   AlertCircle,
   FileSpreadsheet,
-  Eye,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'scientific_network_articles_v5';
@@ -52,24 +53,6 @@ export const App: React.FC = () => {
   });
 
   const [selectedAuthorId, setSelectedAuthorId] = useState<string | null>(null);
-  const [inactiveEdgeOpacity, setInactiveEdgeOpacity] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('graph_inactive_edge_opacity');
-      if (saved) {
-        const val = parseFloat(saved);
-        if (!isNaN(val) && val >= 0.05 && val <= 1) return val;
-      }
-    } catch {}
-    return 0.25;
-  });
-
-  const handleInactiveEdgeOpacityChange = (opacity: number) => {
-    setInactiveEdgeOpacity(opacity);
-    try {
-      localStorage.setItem('graph_inactive_edge_opacity', opacity.toString());
-    } catch {}
-  };
-
   const [showLabels, setShowLabels] = useState(true);
   const [colorByCommunity, setColorByCommunity] = useState(false);
   const [simulationTrigger, setSimulationTrigger] = useState(0);
@@ -396,6 +379,26 @@ export const App: React.FC = () => {
                 <span>Загрузить Excel (.xlsx)</span>
               </button>
 
+              <button
+                type="button"
+                onClick={() => exportResearchersXLSX(networkData.nodes, networkData.links, networkData.communities)}
+                className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition cursor-pointer"
+                title="Скачать числовые характеристики исследователей из сетевого анализа (для научного руководителя)"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
+                <span>Расчеты для научрука (.xlsx)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => exportFullMasterReportXLSX(networkData, filteredArticles, stats)}
+                className="px-3.5 py-2 bg-white/15 hover:bg-white/25 text-white rounded-xl text-xs font-semibold backdrop-blur-md border border-white/30 flex items-center gap-1.5 transition cursor-pointer"
+                title="Скачать полный мастер-отчет со всеми расчетами и матрицами в одном Excel-файле"
+              >
+                <Download className="w-4 h-4 text-indigo-200" />
+                <span>Мастер-отчет (.xlsx)</span>
+              </button>
+
               <a
                 href="/sample_publications.xlsx"
                 download="sample_publications.xlsx"
@@ -620,29 +623,6 @@ export const App: React.FC = () => {
                   </select>
                 </div>
 
-                {/* Transparency of inactive edges */}
-                {activeTab === 'graph' && (
-                  <div className="flex items-center gap-1.5" title="Прозрачность неактивных рёбер графа при выборе исследователя">
-                    <Eye className="w-4 h-4 text-slate-500" />
-                    <span className="font-semibold text-slate-700">Фон связей:</span>
-                    <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-2 py-1 shadow-2xs">
-                      <input
-                        type="range"
-                        min="0.05"
-                        max="0.80"
-                        step="0.05"
-                        value={inactiveEdgeOpacity}
-                        onChange={(e) => handleInactiveEdgeOpacityChange(Number(e.target.value))}
-                        className="w-16 accent-indigo-600 cursor-pointer"
-                        title="Регулировка бледности неактивных ребер"
-                      />
-                      <span className="font-mono text-indigo-700 font-bold text-[11px] w-7 text-right">
-                        {Math.round(inactiveEdgeOpacity * 100)}%
-                      </span>
-                    </div>
-                  </div>
-                )}
-
                 {/* Author Search Field */}
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2" />
@@ -692,8 +672,6 @@ export const App: React.FC = () => {
                 showLabels={showLabels}
                 colorByCommunity={colorByCommunity}
                 simulationTrigger={simulationTrigger}
-                inactiveEdgeOpacity={inactiveEdgeOpacity}
-                onInactiveEdgeOpacityChange={handleInactiveEdgeOpacityChange}
               />
             )}
 
@@ -727,18 +705,29 @@ export const App: React.FC = () => {
                       <span>Исследователи сети ({networkData.nodes.length})</span>
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Сводный рейтинг по числу публикаций, соавторов (Degree Centrality) и показателю центральности по посредничеству (Betweenness)
+                      Числовые характеристики из сетевого анализа: степени вершин, посредничество (Betweenness), близость (Closeness) и кластеризация
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <button
                       type="button"
-                      onClick={() => exportResearchersXLSX(networkData.nodes)}
-                      className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+                      onClick={() => exportResearchersXLSX(networkData.nodes, networkData.links, networkData.communities)}
+                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                      title="Скачать числовые характеристики исследователей из сетевого анализа (для научного руководителя)"
                     >
-                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Экспорт списка в XLSX</span>
+                      <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
+                      <span>Скачать расчеты по исследователям в Excel (.xlsx)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => exportFullMasterReportXLSX(networkData, filteredArticles, stats)}
+                      className="px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+                      title="Скачать единый мастер-отчет со всеми листами (исследователи, связи, матрица, реестр)"
+                    >
+                      <Download className="w-3.5 h-3.5 text-slate-600" />
+                      <span>Мастер-отчет (.xlsx)</span>
                     </button>
                   </div>
                 </div>
@@ -764,17 +753,21 @@ export const App: React.FC = () => {
                 </div>
 
                 {/* Table */}
-                <div className="overflow-x-auto max-h-[500px] border border-slate-200 rounded-xl shadow-inner bg-white">
+                <div className="overflow-x-auto max-h-[520px] border border-slate-200 rounded-xl shadow-inner bg-white">
                   <table className="w-full text-xs text-left border-collapse">
                     <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0 z-10 border-b border-slate-200">
                       <tr>
                         <th className="p-3 w-12 text-center border-r border-slate-200">№</th>
-                        <th className="p-3 border-r border-slate-200 min-w-[200px]">Исследователь (Автор)</th>
-                        <th className="p-3 text-center border-r border-slate-200 w-28">Публикаций</th>
-                        <th className="p-3 text-center border-r border-slate-200 w-36">Соавторов (Degree)</th>
-                        <th className="p-3 text-center border-r border-slate-200 w-36">Центральность (Betweenness)</th>
-                        <th className="p-3 text-center border-r border-slate-200 w-32">Научная школа</th>
-                        <th className="p-3 text-right w-28">Действие</th>
+                        <th className="p-3 border-r border-slate-200 min-w-[190px]">Исследователь (Автор)</th>
+                        <th className="p-3 text-center border-r border-slate-200 w-28">Организация</th>
+                        <th className="p-3 text-center border-r border-slate-200 w-20">Статей</th>
+                        <th className="p-3 text-center border-r border-slate-200 w-28">Соавторов (Degree)</th>
+                        <th className="p-3 text-center border-r border-slate-200 w-28">Сила связи (Strength)</th>
+                        <th className="p-3 text-center border-r border-slate-200 w-32">Посредничество (Betweenness)</th>
+                        <th className="p-3 text-center border-r border-slate-200 w-28">Близость (Closeness)</th>
+                        <th className="p-3 text-center border-r border-slate-200 w-28">Кластеризация</th>
+                        <th className="p-3 text-center border-r border-slate-200 w-28">Научная школа</th>
+                        <th className="p-3 text-right w-24">Действие</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -804,6 +797,15 @@ export const App: React.FC = () => {
                               </span>
                               <span>{author.label}</span>
                             </td>
+                            <td className="p-3 text-center border-r border-slate-100">
+                              <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                (author.organization || '').includes('КарНЦ')
+                                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                                  : 'bg-indigo-50 text-indigo-800 border border-indigo-200'
+                              }`}>
+                                {author.organization || 'ПетрГУ'}
+                              </span>
+                            </td>
                             <td className="p-3 text-center font-bold text-slate-700 border-r border-slate-100">
                               {author.publications}
                             </td>
@@ -812,8 +814,17 @@ export const App: React.FC = () => {
                                 {author.connections}
                               </span>
                             </td>
+                            <td className="p-3 text-center font-bold text-purple-700 border-r border-slate-100">
+                              {author.weightedDegree ?? author.connections}
+                            </td>
                             <td className="p-3 text-center font-mono text-slate-700 border-r border-slate-100 font-semibold">
                               {author.centrality.toFixed(4)}
+                            </td>
+                            <td className="p-3 text-center font-mono text-slate-600 border-r border-slate-100">
+                              {(author.closeness ?? 0).toFixed(4)}
+                            </td>
+                            <td className="p-3 text-center font-mono text-slate-600 border-r border-slate-100">
+                              {(author.clusteringCoefficient ?? 0).toFixed(4)}
                             </td>
                             <td className="p-3 text-center border-r border-slate-100">
                               <span className="inline-block px-2.5 py-0.5 rounded-full text-[10.5px] font-semibold bg-slate-100 text-slate-700">
@@ -856,14 +867,25 @@ export const App: React.FC = () => {
                     </p>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => exportStatsXLSX(stats, networkData)}
-                    className="px-3.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition cursor-pointer"
-                  >
-                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Скачать отчет по статистике (.xlsx)</span>
-                  </button>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => exportStatsXLSX(stats, networkData)}
+                      className="px-3.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Скачать отчет по статистике (.xlsx)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => exportFullMasterReportXLSX(networkData, filteredArticles, stats)}
+                      className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Мастер-отчет (.xlsx)</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* 4 Primary KPI Metric Cards */}
@@ -1111,33 +1133,6 @@ export const App: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Quick opacity setting for background edges in graph */}
-                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1.5 text-xs">
-                    <div className="flex justify-between items-center text-[11px]">
-                      <span className="text-slate-600 font-semibold flex items-center gap-1.5">
-                        <Eye className="w-3.5 h-3.5 text-indigo-600" />
-                        Фоновые связи в графе:
-                      </span>
-                      <span className="font-mono text-indigo-700 font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200 shadow-2xs">
-                        {Math.round(inactiveEdgeOpacity * 100)}%
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0.05"
-                      max="0.80"
-                      step="0.05"
-                      value={inactiveEdgeOpacity}
-                      onChange={(e) => handleInactiveEdgeOpacityChange(Number(e.target.value))}
-                      className="w-full accent-indigo-600 cursor-pointer"
-                    />
-                    <div className="flex justify-between text-[10px] text-slate-400">
-                      <span>5% (Бледные)</span>
-                      <span>25% (Оптимум)</span>
-                      <span>80% (Яркие)</span>
-                    </div>
-                  </div>
-
                   {/* Collaborators list */}
                   {selectedAuthorInfo.collaborators.length > 0 && (
                     <div>
@@ -1239,11 +1234,36 @@ export const App: React.FC = () => {
               <div className="space-y-2 text-xs">
                 <button
                   type="button"
+                  onClick={() => exportResearchersXLSX(networkData.nodes, networkData.links, networkData.communities)}
+                  className="w-full py-2 px-3 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-indigo-900 font-semibold flex items-center justify-between transition cursor-pointer shadow-xs"
+                  title="3 листа: Метрики SNA, Формулы и методология, ТОП лидеры"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                    <span className="text-left leading-tight">Расчеты исследователей (для научрука)</span>
+                  </span>
+                  <span className="text-[10px] bg-indigo-200 text-indigo-800 px-1 py-0.5 rounded font-mono font-bold">.xlsx</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => exportFullMasterReportXLSX(networkData, filteredArticles, stats)}
+                  className="w-full py-1.5 px-3 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-emerald-900 font-medium flex items-center justify-between transition cursor-pointer"
+                  title="5 листов: Исследователи, Ребра сети, Метрики топологии, Реестр статей, Глоссарий"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Мастер-отчет (.xlsx)</span>
+                  </span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => exportAdjacencyMatrixXLSX(networkData.nodes, filteredArticles)}
                   className="w-full py-1.5 px-3 bg-slate-50 hover:bg-indigo-50 border border-slate-200 rounded-lg text-slate-700 font-medium flex items-center justify-between transition cursor-pointer"
                 >
                   <span>Матрица смежности (.xlsx)</span>
-                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-slate-500" />
                 </button>
 
                 <button
@@ -1252,7 +1272,7 @@ export const App: React.FC = () => {
                   className="w-full py-1.5 px-3 bg-slate-50 hover:bg-indigo-50 border border-slate-200 rounded-lg text-slate-700 font-medium flex items-center justify-between transition cursor-pointer"
                 >
                   <span>Таблица связей (.xlsx)</span>
-                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-slate-500" />
                 </button>
 
                 <button
