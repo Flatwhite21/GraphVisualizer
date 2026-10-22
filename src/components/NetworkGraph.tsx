@@ -26,6 +26,8 @@ interface NetworkGraphProps {
   showLabels: boolean;
   colorByCommunity?: boolean;
   simulationTrigger: number;
+  inactiveEdgeOpacity?: number;
+  onInactiveEdgeOpacityChange?: (opacity: number) => void;
 }
 
 // Последовательный синий градиент согласно требованиям ВКР:
@@ -51,6 +53,8 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
   onSelectAuthor,
   colorByCommunity = false,
   simulationTrigger,
+  inactiveEdgeOpacity = 0.25,
+  onInactiveEdgeOpacityChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -58,7 +62,18 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
   const simulationRef = useRef<d3.Simulation<GraphNode, GraphLink> | null>(null);
 
   // User interactive display controls
+  const [internalOpacity, setInternalOpacity] = useState<number>(0.25);
+  const inactiveOpacity = inactiveEdgeOpacity !== undefined ? inactiveEdgeOpacity : internalOpacity;
+  const setInactiveOpacity = (val: number) => {
+    if (onInactiveEdgeOpacityChange) {
+      onInactiveEdgeOpacityChange(val);
+    } else {
+      setInternalOpacity(val);
+    }
+  };
+
   const [showEdgeWeights, setShowEdgeWeights] = useState<boolean>(true);
+  const [showOpacityFlyout, setShowOpacityFlyout] = useState<boolean>(false);
   const [labelMode, setLabelMode] = useState<LabelMode>('smart');
   const [linkDistanceMult, setLinkDistanceMult] = useState<number>(1.2); // 0.8x to 2.0x
   const [chargeStrength, setChargeStrength] = useState<number>(-850); // -400 to -1600
@@ -283,7 +298,6 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
         setHoveredPos({ x: event.clientX, y: event.clientY });
       })
       .on('mouseleave', function () {
-        d3.select(this).attr('stroke-width', UNIFORM_EDGE_WIDTH).attr('stroke-opacity', 0.85);
         setHoveredAuthorId(null);
         setHoveredPos(null);
       });
@@ -492,9 +506,9 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
             .attr('filter', 'url(#node-shadow)');
         } else {
           sel
-            .attr('stroke', '#e2e8f0')
+            .attr('stroke', '#cbd5e1')
             .attr('stroke-width', 1.2)
-            .attr('opacity', 0.16)
+            .attr('opacity', Math.max(0.18, Math.min(0.75, inactiveOpacity * 1.25)))
             .attr('filter', null);
         }
       });
@@ -511,10 +525,11 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
             .attr('stroke-opacity', 1)
             .attr('stroke-width', UNIFORM_EDGE_WIDTH + 1.2);
         } else {
+          // Неактивные рёбра не исчезают, а остаются видимыми, но бледнее активных
           sel
-            .attr('stroke', '#cbd5e1')
-            .attr('stroke-opacity', 0.08)
-            .attr('stroke-width', 1);
+            .attr('stroke', getSequentialBlueLinkColor(d.weight))
+            .attr('stroke-opacity', inactiveOpacity)
+            .attr('stroke-width', UNIFORM_EDGE_WIDTH);
         }
       });
 
@@ -522,7 +537,12 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
         const sId = typeof d.source === 'object' ? (d.source as GraphNode).id : d.source;
         const tId = typeof d.target === 'object' ? (d.target as GraphNode).id : d.target;
         const isIncident = sId === activeFocusId || tId === activeFocusId;
-        d3.select(this).attr('opacity', isIncident && showEdgeWeights ? 1 : 0.05);
+        const sel = d3.select(this);
+        if (isIncident) {
+          sel.attr('opacity', showEdgeWeights ? 1 : 0);
+        } else {
+          sel.attr('opacity', showEdgeWeights ? Math.max(0.04, inactiveOpacity * 0.7) : 0);
+        }
       });
 
       labelsSel.each(function (d) {
@@ -543,11 +563,11 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
             .attr('font-size', '12px')
             .attr('fill', '#1e40af');
         } else {
-          sel.attr('opacity', 0.08);
+          sel.attr('opacity', Math.max(0.06, inactiveOpacity * 0.45));
         }
       });
     }
-  }, [hoveredAuthorId, selectedAuthorId, labelMode, prominentNodeIds, showEdgeWeights, neighborMap]);
+  }, [hoveredAuthorId, selectedAuthorId, labelMode, prominentNodeIds, showEdgeWeights, neighborMap, inactiveOpacity]);
 
   // Zoom controls
   const handleZoomIn = () => {
@@ -632,6 +652,53 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
         </div>
       </div>
 
+      {/* Top Center Banner when Author is Focused: shows quick slider for inactive edge opacity */}
+      {selectedAuthorId && (
+        <div className="absolute top-3.5 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md px-3.5 py-1.5 rounded-xl text-xs shadow-lg border border-indigo-200/90 flex items-center gap-3 z-10 max-w-[95%]">
+          <div className="flex items-center gap-1.5 font-bold text-slate-800 shrink-0">
+            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+            <span className="text-slate-500 font-medium">Автор:</span>
+            <span className="text-indigo-700 font-extrabold truncate max-w-[150px] sm:max-w-[220px]" title={selectedAuthorId}>
+              {selectedAuthorId}
+            </span>
+          </div>
+
+          <div className="w-px h-4 bg-slate-200 shrink-0" />
+
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-slate-600 text-[11px] font-medium hidden sm:inline flex items-center gap-1">
+              <Eye className="w-3.5 h-3.5 text-indigo-600" />
+              Неактивные связи:
+            </span>
+            <input
+              type="range"
+              min="0.05"
+              max="0.80"
+              step="0.05"
+              value={inactiveOpacity}
+              onChange={(e) => setInactiveOpacity(Number(e.target.value))}
+              className="w-20 sm:w-28 accent-indigo-600 cursor-pointer"
+              title="Регулировка прозрачности неактивных рёбер"
+            />
+            <span className="font-mono text-indigo-700 font-bold text-[11px] w-8">
+              {Math.round(inactiveOpacity * 100)}%
+            </span>
+          </div>
+
+          <div className="w-px h-4 bg-slate-200 shrink-0" />
+
+          <button
+            type="button"
+            onClick={() => onSelectAuthor(null)}
+            className="text-slate-400 hover:text-rose-600 font-semibold transition text-xs flex items-center gap-1 cursor-pointer shrink-0"
+            title="Снять выбор автора (вернуть весь граф)"
+          >
+            <span>✕</span>
+            <span className="hidden md:inline text-[11px]">Сбросить</span>
+          </button>
+        </div>
+      )}
+
       {/* Top Right: Color Legend Card (Дипломное требование: последовательный синий градиент) */}
       <div className="absolute top-3.5 right-3.5 bg-white/95 backdrop-blur-md px-3.5 py-3 rounded-xl text-[11px] shadow-md border border-slate-200/90 flex flex-col gap-1.5 z-10">
         <span className="font-bold text-slate-900 text-[10.5px] uppercase tracking-wider flex items-center gap-1.5">
@@ -666,7 +733,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
           <div className="flex justify-between items-center pb-2 border-b border-slate-100">
             <span className="font-bold text-slate-900 flex items-center gap-1.5">
               <Sliders className="w-3.5 h-3.5 text-indigo-600" />
-              Параметры раскладки
+              Параметры отображения
             </span>
             <button
               type="button"
@@ -707,6 +774,57 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
               onChange={(e) => setChargeStrength(-Number(e.target.value))}
               className="w-full accent-indigo-600 cursor-pointer"
             />
+          </div>
+
+          {/* Настройка прозрачности неактивных рёбер */}
+          <div className="pt-2 border-t border-slate-100 space-y-1.5">
+            <div className="flex justify-between items-center">
+              <span className="text-slate-700 font-semibold flex items-center gap-1.5">
+                <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                Прозрачность неактивных связей:
+              </span>
+              <span className="font-mono text-indigo-600 font-bold bg-indigo-50 px-1.5 py-0.5 rounded text-[11px]">
+                {Math.round(inactiveOpacity * 100)}%
+              </span>
+            </div>
+            <p className="text-[10.5px] text-slate-500 leading-tight">
+              Видимость остальных связей при клике на автора (бледнее его связей)
+            </p>
+            <input
+              type="range"
+              min="0.05"
+              max="0.80"
+              step="0.05"
+              value={inactiveOpacity}
+              onChange={(e) => setInactiveOpacity(Number(e.target.value))}
+              className="w-full accent-indigo-600 cursor-pointer"
+            />
+            <div className="flex justify-between text-[10px] text-slate-400">
+              <span>5% (Бледные)</span>
+              <span>25% (Оптимум)</span>
+              <span>80% (Яркие)</span>
+            </div>
+            <div className="flex items-center gap-1 pt-1">
+              {[
+                { label: '10%', val: 0.10 },
+                { label: '25%', val: 0.25 },
+                { label: '40%', val: 0.40 },
+                { label: '60%', val: 0.60 },
+              ].map((preset) => (
+                <button
+                  key={preset.val}
+                  type="button"
+                  onClick={() => setInactiveOpacity(preset.val)}
+                  className={`flex-1 py-0.5 rounded text-[10.5px] font-semibold text-center transition cursor-pointer ${
+                    Math.abs(inactiveOpacity - preset.val) < 0.03
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
@@ -781,6 +899,80 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({
           <Hash className="w-3.5 h-3.5" />
           Вес связей
         </button>
+
+        {/* Inactive Edges Opacity Button & Quick Popover */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setShowOpacityFlyout(!showOpacityFlyout)}
+            title="Настройка прозрачности неактивных рёбер при выборе автора"
+            className={`h-8 px-2.5 flex items-center gap-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+              showOpacityFlyout || (selectedAuthorId && inactiveOpacity > 0.05)
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+            }`}
+          >
+            <Eye className="w-3.5 h-3.5" />
+            <span>Фон: {Math.round(inactiveOpacity * 100)}%</span>
+          </button>
+
+          {showOpacityFlyout && (
+            <div className="absolute bottom-10 right-0 bg-white/98 backdrop-blur-md p-3.5 rounded-xl shadow-2xl border border-slate-200 w-64 z-30 space-y-2.5 text-xs">
+              <div className="flex justify-between items-center pb-1.5 border-b border-slate-100">
+                <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                  <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                  Прозрачность неактивных связей
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowOpacityFlyout(false)}
+                  className="text-slate-400 hover:text-slate-700 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Видимость связей основного графа при выборе автора (сохраняет целостность графа).
+              </p>
+              <div>
+                <div className="flex justify-between mb-1">
+                  <span className="text-slate-600 font-medium">Значение:</span>
+                  <span className="font-mono text-indigo-600 font-bold">{Math.round(inactiveOpacity * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.05"
+                  max="0.80"
+                  step="0.05"
+                  value={inactiveOpacity}
+                  onChange={(e) => setInactiveOpacity(Number(e.target.value))}
+                  className="w-full accent-indigo-600 cursor-pointer"
+                />
+              </div>
+              <div className="flex items-center justify-between gap-1 pt-0.5">
+                {[
+                  { label: '10%', val: 0.10 },
+                  { label: '25%', val: 0.25 },
+                  { label: '40%', val: 0.40 },
+                  { label: '60%', val: 0.60 },
+                ].map((preset) => (
+                  <button
+                    key={preset.val}
+                    type="button"
+                    onClick={() => setInactiveOpacity(preset.val)}
+                    className={`flex-1 py-1 rounded text-[10.5px] font-semibold text-center transition cursor-pointer ${
+                      Math.abs(inactiveOpacity - preset.val) < 0.03
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Settings button */}
         <button

@@ -32,6 +32,7 @@ import {
   CheckCircle2,
   AlertCircle,
   FileSpreadsheet,
+  Eye,
 } from 'lucide-react';
 
 const STORAGE_KEY = 'scientific_network_articles_v5';
@@ -51,6 +52,24 @@ export const App: React.FC = () => {
   });
 
   const [selectedAuthorId, setSelectedAuthorId] = useState<string | null>(null);
+  const [inactiveEdgeOpacity, setInactiveEdgeOpacity] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('graph_inactive_edge_opacity');
+      if (saved) {
+        const val = parseFloat(saved);
+        if (!isNaN(val) && val >= 0.05 && val <= 1) return val;
+      }
+    } catch {}
+    return 0.25;
+  });
+
+  const handleInactiveEdgeOpacityChange = (opacity: number) => {
+    setInactiveEdgeOpacity(opacity);
+    try {
+      localStorage.setItem('graph_inactive_edge_opacity', opacity.toString());
+    } catch {}
+  };
+
   const [showLabels, setShowLabels] = useState(true);
   const [colorByCommunity, setColorByCommunity] = useState(false);
   const [simulationTrigger, setSimulationTrigger] = useState(0);
@@ -601,6 +620,29 @@ export const App: React.FC = () => {
                   </select>
                 </div>
 
+                {/* Transparency of inactive edges */}
+                {activeTab === 'graph' && (
+                  <div className="flex items-center gap-1.5" title="Прозрачность неактивных рёбер графа при выборе исследователя">
+                    <Eye className="w-4 h-4 text-slate-500" />
+                    <span className="font-semibold text-slate-700">Фон связей:</span>
+                    <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-2 py-1 shadow-2xs">
+                      <input
+                        type="range"
+                        min="0.05"
+                        max="0.80"
+                        step="0.05"
+                        value={inactiveEdgeOpacity}
+                        onChange={(e) => handleInactiveEdgeOpacityChange(Number(e.target.value))}
+                        className="w-16 accent-indigo-600 cursor-pointer"
+                        title="Регулировка бледности неактивных ребер"
+                      />
+                      <span className="font-mono text-indigo-700 font-bold text-[11px] w-7 text-right">
+                        {Math.round(inactiveEdgeOpacity * 100)}%
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 {/* Author Search Field */}
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2" />
@@ -650,6 +692,8 @@ export const App: React.FC = () => {
                 showLabels={showLabels}
                 colorByCommunity={colorByCommunity}
                 simulationTrigger={simulationTrigger}
+                inactiveEdgeOpacity={inactiveEdgeOpacity}
+                onInactiveEdgeOpacityChange={handleInactiveEdgeOpacityChange}
               />
             )}
 
@@ -1064,6 +1108,33 @@ export const App: React.FC = () => {
                       <div className="text-sm font-bold text-slate-800 font-mono">
                         {selectedAuthorInfo.node.centrality.toFixed(3)}
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Quick opacity setting for background edges in graph */}
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1.5 text-xs">
+                    <div className="flex justify-between items-center text-[11px]">
+                      <span className="text-slate-600 font-semibold flex items-center gap-1.5">
+                        <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                        Фоновые связи в графе:
+                      </span>
+                      <span className="font-mono text-indigo-700 font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200 shadow-2xs">
+                        {Math.round(inactiveEdgeOpacity * 100)}%
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.05"
+                      max="0.80"
+                      step="0.05"
+                      value={inactiveEdgeOpacity}
+                      onChange={(e) => handleInactiveEdgeOpacityChange(Number(e.target.value))}
+                      className="w-full accent-indigo-600 cursor-pointer"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-400">
+                      <span>5% (Бледные)</span>
+                      <span>25% (Оптимум)</span>
+                      <span>80% (Яркие)</span>
                     </div>
                   </div>
 
