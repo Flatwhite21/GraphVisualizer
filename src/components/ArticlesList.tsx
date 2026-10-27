@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Article } from '../types';
-import { exportPublicationsXLSX } from '../utils/exporter';
+import { exportPublicationsXLSX, exportImportTemplateWithFormulasXLSX } from '../utils/exporter';
 import { Search, FileSpreadsheet, Plus, Trash2, BookOpen, Building, Calendar, Filter } from 'lucide-react';
 
 interface ArticlesListProps {
@@ -108,6 +108,16 @@ export const ArticlesList: React.FC<ArticlesListProps> = ({
           >
             <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
             <span>Экспорт в XLSX</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => exportImportTemplateWithFormulasXLSX()}
+            className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-900 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition cursor-pointer"
+            title="Скачать готовый образец таблицы с формулами Excel для ввода и последующего импорта статей"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 text-purple-600" />
+            <span>Шаблон с формулами (.xlsx)</span>
           </button>
         </div>
       </div>

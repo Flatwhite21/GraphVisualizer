@@ -412,6 +412,7 @@ export function buildNetwork(articles: Article[]): NetworkData {
 
   const totalN = authorList.length;
 
+  // Nodes: all nodes have uniform, identical size as required by thesis
   const UNIFORM_NODE_SIZE = 11;
   const nodes: GraphNode[] = authorList.map((author) => {
     const connections = adj.get(author)?.size || 0;

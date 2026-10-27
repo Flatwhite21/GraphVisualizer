@@ -13,6 +13,8 @@ import {
   exportStatsXLSX,
   exportPublicationsXLSX,
   exportFullMasterReportXLSX,
+  exportImportTemplateWithFormulasXLSX,
+  exportExplanatoryNoteTXT,
 } from './utils/exporter';
 import {
   Share2,
@@ -224,14 +226,16 @@ export const App: React.FC = () => {
 
         const formatDesc =
           result.detectedFormat === 'matrix_incidence'
-            ? 'формат матрицы инцидентности (с отметками соавторов)'
-            : 'стандартный табличный формат';
+            ? 'матрица инцидентности'
+            : 'табличный список';
+
+        const formulaText = result.hasFormulas ? ' — формулы Excel успешно вычислены' : '';
 
         setImportNotice({
-          msg: `Успешно загружено ${result.articles.length} публикаций из "${file.name}" (${formatDesc}).`,
+          msg: `Успешно импортировано ${result.articles.length} публикаций из "${file.name}" (${formatDesc}${formulaText}). Граф и метрики SNA обновлены.`,
           type: 'success',
         });
-        setTimeout(() => setImportNotice(null), 6000);
+        setTimeout(() => setImportNotice(null), 7000);
       } else {
         setImportNotice({
           msg: 'В файле не найдено строк с публикациями. Проверьте структуру колонок.',
@@ -373,7 +377,7 @@ export const App: React.FC = () => {
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className="px-3.5 py-2 bg-white text-indigo-900 hover:bg-indigo-50 rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition cursor-pointer"
-                title="Загрузить Excel-файл (.xlsx) с публикациями"
+                title="Загрузить Excel-файл (.xlsx) с публикациями. Поддерживаются файлы с формулами!"
               >
                 <Upload className="w-4 h-4 text-indigo-600" />
                 <span>Загрузить Excel (.xlsx)</span>
@@ -381,33 +385,43 @@ export const App: React.FC = () => {
 
               <button
                 type="button"
-                onClick={() => exportResearchersXLSX(networkData.nodes, networkData.links, networkData.communities)}
+                onClick={() => exportResearchersXLSX(networkData.nodes, networkData.links, networkData.communities, filteredArticles)}
                 className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition cursor-pointer"
-                title="Скачать числовые характеристики исследователей из сетевого анализа (для научного руководителя)"
+                title="Скачать расчеты по исследователям в Excel с живыми формулами: SUM, AVERAGE, MAX, MIN, RANK, Degree Centrality"
               >
                 <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
-                <span>Расчеты для научрука (.xlsx)</span>
+                <span>Расчеты для научрука (.xlsx с формулами)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => exportExplanatoryNoteTXT(networkData.nodes, networkData.links, networkData.communities, filteredArticles, stats)}
+                className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition cursor-pointer"
+                title="Скачать подробную пояснительную записку с расшифровкой числовых характеристик и формул (.txt)"
+              >
+                <FileText className="w-4 h-4 text-amber-100" />
+                <span>Пояснительная записка (.txt)</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => exportFullMasterReportXLSX(networkData, filteredArticles, stats)}
-                className="px-3.5 py-2 bg-white/15 hover:bg-white/25 text-white rounded-xl text-xs font-semibold backdrop-blur-md border border-white/30 flex items-center gap-1.5 transition cursor-pointer"
-                title="Скачать полный мастер-отчет со всеми расчетами и матрицами в одном Excel-файле"
+                className="px-3 py-2 bg-white/15 hover:bg-white/25 text-white rounded-xl text-xs font-semibold backdrop-blur-md border border-white/30 flex items-center gap-1.5 transition cursor-pointer"
+                title="Скачать полный мастер-отчет со всеми расчетами и формулами на всех листах"
               >
                 <Download className="w-4 h-4 text-indigo-200" />
                 <span>Мастер-отчет (.xlsx)</span>
               </button>
 
-              <a
-                href="/sample_publications.xlsx"
-                download="sample_publications.xlsx"
-                className="px-3 py-2 bg-indigo-950/40 hover:bg-indigo-950/60 text-indigo-200 rounded-xl text-xs font-medium border border-indigo-400/30 flex items-center gap-1.5 transition"
-                title="Скачать образец таблицы с публикациями"
+              <button
+                type="button"
+                onClick={() => exportImportTemplateWithFormulasXLSX()}
+                className="px-3 py-2 bg-indigo-950/40 hover:bg-indigo-950/60 text-indigo-200 rounded-xl text-xs font-medium border border-indigo-400/30 flex items-center gap-1.5 transition cursor-pointer"
+                title="Скачать готовый шаблон Excel с автоматическими формулами для последующего импорта"
               >
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>Образец XLSX</span>
-              </a>
+                <FileSpreadsheet className="w-4 h-4 text-indigo-300" />
+                <span>Шаблон с формулами (.xlsx)</span>
+              </button>
             </div>
           </div>
 
@@ -712,12 +726,22 @@ export const App: React.FC = () => {
                   <div className="flex items-center gap-2 flex-wrap">
                     <button
                       type="button"
-                      onClick={() => exportResearchersXLSX(networkData.nodes, networkData.links, networkData.communities)}
+                      onClick={() => exportResearchersXLSX(networkData.nodes, networkData.links, networkData.communities, filteredArticles)}
                       className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-xs"
-                      title="Скачать числовые характеристики исследователей из сетевого анализа (для научного руководителя)"
+                      title="Скачать числовые характеристики исследователей из сетевого анализа с живыми формулами (для научного руководителя)"
                     >
                       <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
-                      <span>Скачать расчеты по исследователям в Excel (.xlsx)</span>
+                      <span>Расчеты для научрука (.xlsx)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => exportExplanatoryNoteTXT(networkData.nodes, networkData.links, networkData.communities, filteredArticles, stats)}
+                      className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-xs"
+                      title="Скачать пояснительную записку с описанием значений и формул (.txt)"
+                    >
+                      <FileText className="w-4 h-4 text-amber-100" />
+                      <span>Пояснительная записка (.txt)</span>
                     </button>
 
                     <button
@@ -1282,6 +1306,19 @@ export const App: React.FC = () => {
                 >
                   <span>Сеть в GraphML (для Gephi)</span>
                   <Share2 className="w-3.5 h-3.5 text-indigo-600" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => exportImportTemplateWithFormulasXLSX()}
+                  className="w-full py-1.5 px-3 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-lg text-purple-900 font-medium flex items-center justify-between transition cursor-pointer"
+                  title="Скачать готовый образец для заполнения публикаций и соавторов с автоматическими формулами Excel"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                    <span>Шаблон с формулами (.xlsx)</span>
+                  </span>
+                  <span className="text-[10px] bg-purple-200 text-purple-800 px-1 py-0.5 rounded font-mono font-bold">.xlsx</span>
                 </button>
 
                 <button

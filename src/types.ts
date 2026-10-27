@@ -21,13 +21,13 @@ export interface GraphNode {
   id: string;
   label: string;
   size: number;
-  connections: number;
+  connections: number; // Degree (число соавторов)
   publications: number;
-  centrality: number;
+  centrality: number; // Betweenness Centrality
   normalizedDegree?: number;
-  weightedDegree?: number;
-  closeness?: number;
-  clusteringCoefficient?: number;
+  weightedDegree?: number; // Strength (сумма весов связей)
+  closeness?: number; // Closeness Centrality
+  clusteringCoefficient?: number; // Local Clustering Coefficient
   organization?: string;
   communityId?: number;
   x?: number;
