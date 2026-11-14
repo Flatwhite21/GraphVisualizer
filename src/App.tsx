@@ -357,7 +357,7 @@ export const App: React.FC = () => {
                     Сетевой анализ научных связей авторов
                   </h1>
                   <p className="text-xs md:text-sm text-indigo-100 font-medium opacity-90">
-                    Исследование соавторства и научных школ ПетрГУ и КарНЦ РАН (2000–2026 гг.)
+                    Исследование соавторства и научных школ ПетрГУ и КарНЦ РАН
                   </p>
                 </div>
               </div>
@@ -390,28 +390,28 @@ export const App: React.FC = () => {
                 title="Скачать расчеты по исследователям в Excel с живыми формулами: SUM, AVERAGE, MAX, MIN, RANK, Degree Centrality"
               >
                 <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
-                <span>Расчеты для научрука (.xlsx с формулами)</span>
+                <span>Расчеты (в формате xlsx)</span>
               </button>
 
-              <button
+              {/* <button
                 type="button"
                 onClick={() => exportExplanatoryNoteTXT(networkData.nodes, networkData.links, networkData.communities, filteredArticles, stats)}
                 className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition cursor-pointer"
-                title="Скачать подробную пояснительную записку с расшифровкой числовых характеристик и формул (.txt)"
+                title="Скачать пояснительную записку с расшифровкой числовых характеристик и формул (.txt)"
               >
                 <FileText className="w-4 h-4 text-amber-100" />
                 <span>Пояснительная записка (.txt)</span>
-              </button>
+              </button> */}
 
-              <button
+              {/* <button
                 type="button"
                 onClick={() => exportFullMasterReportXLSX(networkData, filteredArticles, stats)}
                 className="px-3 py-2 bg-white/15 hover:bg-white/25 text-white rounded-xl text-xs font-semibold backdrop-blur-md border border-white/30 flex items-center gap-1.5 transition cursor-pointer"
-                title="Скачать полный мастер-отчет со всеми расчетами и формулами на всех листах"
+                title="Скачать полный мастер-отчет со всеми расчетами и формулами"
               >
                 <Download className="w-4 h-4 text-indigo-200" />
                 <span>Мастер-отчет (.xlsx)</span>
-              </button>
+              </button> */}
 
               <button
                 type="button"
@@ -731,10 +731,10 @@ export const App: React.FC = () => {
                       title="Скачать числовые характеристики исследователей из сетевого анализа с живыми формулами (для научного руководителя)"
                     >
                       <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
-                      <span>Расчеты для научрука (.xlsx)</span>
+                      <span>Расчеты (в формате xlsx)</span>
                     </button>
 
-                    <button
+                    {/* <button
                       type="button"
                       onClick={() => exportExplanatoryNoteTXT(networkData.nodes, networkData.links, networkData.communities, filteredArticles, stats)}
                       className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-xs"
@@ -742,9 +742,9 @@ export const App: React.FC = () => {
                     >
                       <FileText className="w-4 h-4 text-amber-100" />
                       <span>Пояснительная записка (.txt)</span>
-                    </button>
+                    </button> */}
 
-                    <button
+                    {/* <button
                       type="button"
                       onClick={() => exportFullMasterReportXLSX(networkData, filteredArticles, stats)}
                       className="px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition cursor-pointer"
@@ -752,7 +752,7 @@ export const App: React.FC = () => {
                     >
                       <Download className="w-3.5 h-3.5 text-slate-600" />
                       <span>Мастер-отчет (.xlsx)</span>
-                    </button>
+                    </button> */}
                   </div>
                 </div>
 
@@ -901,14 +901,14 @@ export const App: React.FC = () => {
                       <span>Скачать отчет по статистике (.xlsx)</span>
                     </button>
 
-                    <button
+                    {/* <button
                       type="button"
                       onClick={() => exportFullMasterReportXLSX(networkData, filteredArticles, stats)}
                       className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-xs"
                     >
                       <Download className="w-3.5 h-3.5" />
                       <span>Мастер-отчет (.xlsx)</span>
-                    </button>
+                    </button> */}
                   </div>
                 </div>
 
@@ -1264,12 +1264,12 @@ export const App: React.FC = () => {
                 >
                   <span className="flex items-center gap-1.5">
                     <FileSpreadsheet className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                    <span className="text-left leading-tight">Расчеты исследователей (для научрука)</span>
+                    <span className="text-left leading-tight">Расчеты исследователей</span>
                   </span>
                   <span className="text-[10px] bg-indigo-200 text-indigo-800 px-1 py-0.5 rounded font-mono font-bold">.xlsx</span>
                 </button>
 
-                <button
+                {/* <button
                   type="button"
                   onClick={() => exportFullMasterReportXLSX(networkData, filteredArticles, stats)}
                   className="w-full py-1.5 px-3 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-emerald-900 font-medium flex items-center justify-between transition cursor-pointer"
@@ -1279,7 +1279,7 @@ export const App: React.FC = () => {
                     <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                     <span>Мастер-отчет (.xlsx)</span>
                   </span>
-                </button>
+                </button> */}
 
                 <button
                   type="button"
